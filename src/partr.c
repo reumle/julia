@@ -43,13 +43,15 @@ uint64_t io_wakeup_leave;
 );
 
 
-JL_DLLEXPORT void jl_set_task_tid(jl_task_t *task, int tid) JL_NOTSAFEPOINT
+JL_DLLEXPORT int jl_set_task_tid(jl_task_t *task, int tid) JL_NOTSAFEPOINT
 {
     // Try to acquire the lock on this task.
-    // If this fails, we'll check for that error later (in jl_switchto).
-    if (jl_atomic_load_acquire(&task->tid) != tid) {
-        jl_atomic_compare_exchange(&task->tid, -1, tid);
-    }
+    int16_t was = task->tid;
+    if (was == tid)
+        return 1;
+    if (was == -1)
+        return jl_atomic_bool_compare_exchange(&task->tid, -1, tid);
+    return 0;
 }
 
 // GC functions used
@@ -184,8 +186,7 @@ static inline jl_task_t *multiq_deletemin(void)
         return NULL;
 
     task = heaps[rn1].tasks[0];
-    jl_set_task_tid(task, ptls->tid);
-    if (jl_atomic_load_acquire(&task->tid) != ptls->tid) {
+    if (!jl_set_task_tid(task, ptls->tid)) {
         jl_mutex_unlock_nogc(&heaps[rn1].lock);
         goto retry;
     }
@@ -338,7 +339,7 @@ static int sleep_check_after_threshold(uint64_t *start_cycles)
 static void wake_thread(int16_t tid)
 {
     jl_ptls_t other = jl_all_tls_states[tid];
-    if (1 /*jl_atomic_load(&other->sleep_check_state) != not_sleeping*/) {
+    if (jl_atomic_load(&other->sleep_check_state) != not_sleeping) {
         int16_t state = jl_atomic_exchange(&other->sleep_check_state, not_sleeping); // prohibit it from sleeping
         if (state == sleeping) { // see if it was possibly sleeping before now
             uv_mutex_lock(&other->sleep_lock);
@@ -387,9 +388,12 @@ JL_DLLEXPORT void jl_wakeup_thread(int16_t tid)
         if (jl_atomic_load(&sleep_check_state) != not_sleeping) {
             int16_t state = jl_atomic_exchange(&sleep_check_state, not_sleeping);
             if (state == sleeping) {
-                for (tid = 0; tid < jl_n_threads; tid++)
+                for (tid = 0; tid < jl_n_threads; tid++) {
+                    if (sleep_check_state != not_sleeping)
+                        return; // no point in trying to get everyone running since the work is already done
                     if (tid != self)
                         wake_thread(tid);
+                }
                 // check if we need to notify uv_run too
                 if (uvlock != system_self && jl_atomic_load(&jl_uv_mutex.owner) != 0)
                     wake_libuv();
@@ -412,7 +416,9 @@ static jl_task_t *get_next_task(jl_value_t *trypoptask, jl_value_t *q)
         return task;
     }
     jl_gc_safepoint();
-    return multiq_deletemin();
+    if (jl_atomic_load(&sleep_check_state) != sleeping)
+        return multiq_deletemin();
+    return NULL;
 }
 
 static int may_sleep(jl_ptls_t ptls)
