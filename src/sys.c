@@ -550,7 +550,7 @@ JL_DLLEXPORT const char *jl_pathname_for_handle(void *handle)
 #elif defined(_OS_WINDOWS_)
 
     wchar_t *pth16 = (wchar_t*)malloc_s(32768 * sizeof(*pth16)); // max long path length
-    DWORD n16 = GetModuleFileNameW((HMODULE)handle,pth16,32768);
+    DWORD n16 = GetModuleFileNameW((HMODULE)handle, pth16, 32768);
     if (n16 <= 0) {
         free(pth16);
         return NULL;
@@ -589,26 +589,30 @@ JL_DLLEXPORT const char *jl_pathname_for_handle(void *handle)
 }
 
 #ifdef _OS_WINDOWS_
-// Takes a handle (as returned from dlopen()) and returns the absolute path to the image loaded
+// Get a list of all the modules in this process.
 JL_DLLEXPORT int jl_dllist(jl_array_t *list)
 {
-    HMODULE hMods[1024];
-    DWORD cbNeeded;
+    DWORD cb, cbNeeded;
+    HMODULE *hMods;
     unsigned int i;
-    const char* path;
-    // Get a list of all the modules in this process.
-    if (EnumProcessModules(GetCurrentProcess(), hMods, sizeof(hMods), &cbNeeded)) {
-        for (i = 0; i < (cbNeeded / sizeof(HMODULE)); i++) {
-            jl_array_grow_end((jl_array_t*)list, 1);
-            path = jl_pathname_for_handle(hMods[i]);
-            //XXX: change to jl_arrayset if array storage allocation for Array{String,1} changes:
-            jl_value_t *v = jl_cstr_to_string(path);
-            jl_array_ptr_set(list, jl_array_dim0(list)-1, v);
+    cbNeeded = 1024 * sizeof(*hMods);
+    do {
+        cb = cbNeeded;
+        hMods = (HMODULE*)malloc_s(cb);
+        if (!EnumProcessModulesEx(GetCurrentProcess(), hMods, cb, &cbNeeded, LIST_MODULES_ALL)) {
+          free(hMods);
+          return FALSE;
         }
-        return TRUE;
-    } else {
-        return FALSE;
+    } while (cb < cbNeeded);
+    for (i = 0; i < (cbNeeded / sizeof(HMODULE)); i++) {
+        jl_array_grow_end((jl_array_t*)list, 1);
+        const char* path = jl_pathname_for_handle(hMods[i]);
+        // XXX: change to jl_arrayset if array storage allocation for Array{String,1} changes:
+        jl_value_t *v = jl_cstr_to_string(path);
+        jl_array_ptr_set(list, jl_array_dim0(list) - 1, v);
     }
+    free(hMods);
+    return TRUE;
 }
 #endif
 
