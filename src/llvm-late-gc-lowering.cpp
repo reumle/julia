@@ -828,6 +828,27 @@ std::vector<int> LateLowerGCFrame::NumberAllBase(State &S, Value *CurrentV) {
                 Numbers.push_back(BaseNumbers[i]);
         }
         assert(CountTrackedPointers(EVI->getType()).count == Numbers.size());
+    } else if (auto *II = dyn_cast<IntrinsicInst>(CurrentV)) {
+        switch (II->getIntrinsicID()) {
+            case Intrinsic::masked_gather: {
+                Numbers = NumberAll(S, II->getOperand(0));
+                break;
+            }
+            // case Intrinsic::masked_load:
+            default: {
+                if (tracked.derived) {
+                    CurrentV->print(errs());
+                    llvm_unreachable("Unexpected generating intrinsic for derived values");
+                } else {
+                    // Handle them like other calls, just number them sequentially
+                    for (unsigned i = 0; i < tracked.count; ++i) {
+                        int Num = ++S.MaxPtrNumber;
+                        Numbers.push_back(Num);
+                        S.ReversePtrNumbering[Num] = CurrentV;
+                    }
+                }
+            }
+        }
     } else if (tracked.derived) {
         if (isa<SelectInst>(CurrentV)) {
             LiftSelect(S, cast<SelectInst>(CurrentV));
