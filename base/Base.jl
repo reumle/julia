@@ -364,7 +364,7 @@ end
 # These functions are duplicated in client.jl/include(::String) for
 # nicer stacktraces. Modifications here have to be backported there
 include(mod::Module, path::AbstractString) = include(mod, convert(String, path))
-function include(mod::Module, _path::String)
+function include(mod::Module, _path::String; mapexpr::Function=identity)
     path, prev = _include_dependency(mod, _path)
     for callback in include_callbacks # to preserve order, must come before Core.include
         invokelatest(callback, mod, path)
@@ -374,7 +374,7 @@ function include(mod::Module, _path::String)
     local result
     try
         # result = Core.include(mod, path)
-        result = ccall(:jl_load_, Any, (Any, Any), mod, path)
+        result = ccall(:jl_load_rewrite, Any, (Any, Cstring, Any), mod, path, mapexpr)
     finally
         if prev === nothing
             delete!(tls, :SOURCE_PATH)
