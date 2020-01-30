@@ -490,6 +490,27 @@ static std::pair<Value*,int> FindBaseValue(const State &S, Value *V, bool UseCac
             // In general a load terminates a walk
             break;
         }
+        else if (auto II = dyn_cast<IntrinsicInst>(CurrentV)) {
+            // Some intrinsics behave like LoadInst
+            if (II->getIntrinsicID() == Intrinsic::masked_load ||
+                II->getIntrinsicID() == Intrinsic::masked_gather) {
+                if (auto PtrT = dyn_cast<PointerType>(II->getType())) {
+                    if (PtrT->getAddressSpace() == AddressSpace::Loaded) {
+                        CurrentV = II->getOperand(0);
+                        if (!isSpecialPtr(CurrentV->getType())) {
+                            // Special case to bypass the check below.
+                            // This could really be anything, but it's not loaded
+                            // from a tracked pointer, so it doesn't matter what
+                            // it is.
+                            return std::make_pair(CurrentV, fld_idx);
+                        }
+                        continue;
+                    }
+                }
+                // In general a load terminates a walk
+                break;
+            }
+        }
         else {
             break;
         }
@@ -828,27 +849,6 @@ std::vector<int> LateLowerGCFrame::NumberAllBase(State &S, Value *CurrentV) {
                 Numbers.push_back(BaseNumbers[i]);
         }
         assert(CountTrackedPointers(EVI->getType()).count == Numbers.size());
-    } else if (auto *II = dyn_cast<IntrinsicInst>(CurrentV)) {
-        switch (II->getIntrinsicID()) {
-            case Intrinsic::masked_gather: {
-                Numbers = NumberAll(S, II->getOperand(0));
-                break;
-            }
-            // case Intrinsic::masked_load:
-            default: {
-                if (tracked.derived) {
-                    CurrentV->print(errs());
-                    llvm_unreachable("Unexpected generating intrinsic for derived values");
-                } else {
-                    // Handle them like other calls, just number them sequentially
-                    for (unsigned i = 0; i < tracked.count; ++i) {
-                        int Num = ++S.MaxPtrNumber;
-                        Numbers.push_back(Num);
-                        S.ReversePtrNumbering[Num] = CurrentV;
-                    }
-                }
-            }
-        }
     } else if (tracked.derived) {
         if (isa<SelectInst>(CurrentV)) {
             LiftSelect(S, cast<SelectInst>(CurrentV));
