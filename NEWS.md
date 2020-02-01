@@ -48,6 +48,8 @@ New library functions
   provide one-argument method that returns a closure.  The old methods of `merge` and
   `merge!` are still available for backward compatibility ([#34296]).
 * The new `isdisjoint` function indicates whether two collections are disjoint ([#34427]).
+* `include` now accepts an optional `mapexpr` first argument to transform the parsed
+  expressions before they are evaluated ([#34595]).
 
 New library features
 --------------------
