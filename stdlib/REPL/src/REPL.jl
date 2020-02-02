@@ -85,7 +85,7 @@ function softscope(@nospecialize ex)
     if ex isa Expr
         h = ex.head
         if h === :toplevel
-            return Expr(ex.head, softscope.(ex.args))
+            return Expr(h, Any[softscope(a) for a in ex.args])
         elseif h in (:meta, :import, :using, :export, :module, :error, :incomplete, :thunk)
             return ex
         else
